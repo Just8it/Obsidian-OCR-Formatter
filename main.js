@@ -43174,7 +43174,9 @@ var DEFAULT_SETTINGS = {
   saveLocation: "cursor",
   defaultPreset: "Academic Blue",
   openRouterApiKey: "",
-  openRouterModel: "google/gemini-2.0-flash-exp:free"
+  openRouterModel: "google/gemini-2.0-flash-exp:free",
+  extractImages: true,
+  imageSubfolder: "assets"
 };
 var FormattedResponseSchema = external_exports.object({
   formatted_markdown: external_exports.string().describe("The OCR text formatted into standard Markdown following the rules."),
@@ -43287,21 +43289,65 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
           type: "document_url",
           documentUrl: signedUrl.url
         },
-        includeImageBase64: true
+        includeImageBase64: this.settings.extractImages
       });
       let markdown = "";
+      const images = {};
       if (ocrResponse && ocrResponse.pages) {
         ocrResponse.pages.forEach((page, index) => {
           if (index > 0)
             markdown += "\n\n---\n\n";
           markdown += page.markdown || "";
+          if (this.settings.extractImages && page.images && page.images.length > 0) {
+            page.images.forEach((image) => {
+              const imageName = image.id;
+              let base64Data2 = image.imageBase64 || "";
+              if (base64Data2.startsWith("data:")) {
+                base64Data2 = base64Data2.split(",")[1];
+              }
+              if (base64Data2) {
+                images[imageName] = base64Data2;
+              }
+            });
+          }
         });
       }
-      return markdown.trim();
+      return { markdown: markdown.trim(), images };
     } catch (error) {
       console.error("Mistral SDK Error:", error);
       throw new Error(`Mistral OCR Failed: ${error.message}`);
     }
+  }
+  // ==================== IMAGE SAVING ====================
+  async saveOCRImages(images, basePath) {
+    const savedPaths = {};
+    if (Object.keys(images).length === 0)
+      return savedPaths;
+    let targetFolder = basePath;
+    if (this.settings.imageSubfolder) {
+      targetFolder = `${basePath}/${this.settings.imageSubfolder}`;
+      const folder = this.app.vault.getAbstractFileByPath(targetFolder);
+      if (!(folder instanceof import_obsidian2.TFolder)) {
+        await this.app.vault.createFolder(targetFolder);
+      }
+    }
+    for (const [imageName, base64Data] of Object.entries(images)) {
+      try {
+        const imagePath = `${targetFolder}/${imageName}`;
+        const arrayBuffer = (0, import_obsidian2.base64ToArrayBuffer)(base64Data);
+        const existingFile = this.app.vault.getAbstractFileByPath(imagePath);
+        if (existingFile instanceof import_obsidian2.TFile) {
+          await this.app.vault.modifyBinary(existingFile, arrayBuffer);
+        } else {
+          await this.app.vault.createBinary(imagePath, arrayBuffer);
+        }
+        savedPaths[imageName] = imagePath;
+      } catch (error) {
+        console.error(`Failed to save image ${imageName}:`, error);
+      }
+    }
+    new import_obsidian2.Notice(`\u{1F4F7} Saved ${Object.keys(savedPaths).length} images`);
+    return savedPaths;
   }
   // ==================== CORE FORMATTING (WITH ZOD) ====================
   async formatText(rawText, modelOverride, customInstruction, editor = null) {
@@ -43377,12 +43423,18 @@ ${rawText}
   }
   // ==================== PIPELINE ====================
   async processImage(base64Data, mimeType, modelOverride, customInstruction) {
+    var _a;
     try {
-      const ocrText = await this.performMistralOCR(base64Data, mimeType);
-      if (!ocrText)
+      const ocrResult = await this.performMistralOCR(base64Data, mimeType);
+      if (!ocrResult.markdown)
         throw new Error("Empty OCR Result");
+      if (Object.keys(ocrResult.images).length > 0) {
+        const activeFile = this.app.workspace.getActiveFile();
+        const basePath = ((_a = activeFile == null ? void 0 : activeFile.parent) == null ? void 0 : _a.path) || "";
+        await this.saveOCRImages(ocrResult.images, basePath);
+      }
       new import_obsidian2.Notice("\u2705 OCR complete! Formatting...");
-      const formatted = await this.formatText(ocrText, modelOverride, customInstruction);
+      const formatted = await this.formatText(ocrResult.markdown, modelOverride, customInstruction);
       return formatted;
     } catch (error) {
       new import_obsidian2.Notice(`\u274C Error: ${error.message}`);
@@ -43448,6 +43500,15 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.plugin.settings.mistralApiKey = value;
       await this.plugin.saveSettings();
     })).addButton((b) => b.setButtonText("Test").onClick(() => {
+    }));
+    containerEl.createEl("h3", { text: "Image Extraction" });
+    new import_obsidian2.Setting(containerEl).setName("Extract Images").setDesc("Save images from OCR response to vault").addToggle((toggle) => toggle.setValue(this.plugin.settings.extractImages).onChange(async (value) => {
+      this.plugin.settings.extractImages = value;
+      await this.plugin.saveSettings();
+    }));
+    new import_obsidian2.Setting(containerEl).setName("Image Subfolder").setDesc('Subfolder for saved images (e.g., "assets"). Leave empty to save in same folder.').addText((text) => text.setPlaceholder("assets").setValue(this.plugin.settings.imageSubfolder).onChange(async (value) => {
+      this.plugin.settings.imageSubfolder = value;
+      await this.plugin.saveSettings();
     }));
     new import_obsidian2.Setting(containerEl).setName("Default Preset").addDropdown(async (d) => {
       const presets = await this.plugin.presetManager.getPresets();
@@ -43649,6 +43710,7 @@ var OCRModal = class extends import_obsidian2.Modal {
       });
     } else {
       new import_obsidian2.ButtonComponent(rightActions).setButtonText("OCR").setIcon("scan").setTooltip("Extract text only").onClick(async () => {
+        var _a;
         if (!this.fileData || !this.fileMimeType) {
           new import_obsidian2.Notice("Please select a file first");
           return;
@@ -43656,8 +43718,13 @@ var OCRModal = class extends import_obsidian2.Modal {
         rightActions.empty();
         rightActions.createEl("span", { text: "\u23F3 ..." });
         try {
-          const text = await this.plugin.performMistralOCR(this.fileData, this.fileMimeType);
-          this.outputResult(text);
+          const ocrResult = await this.plugin.performMistralOCR(this.fileData, this.fileMimeType);
+          if (Object.keys(ocrResult.images).length > 0) {
+            const activeFile = this.plugin.app.workspace.getActiveFile();
+            const basePath = ((_a = activeFile == null ? void 0 : activeFile.parent) == null ? void 0 : _a.path) || "";
+            await this.plugin.saveOCRImages(ocrResult.images, basePath);
+          }
+          this.outputResult(ocrResult.markdown);
           this.close();
         } catch (e) {
           new import_obsidian2.Notice("OCR Failed: " + e);

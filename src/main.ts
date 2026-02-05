@@ -1,4 +1,4 @@
-import { Plugin, PluginSettingTab, Setting, Notice, requestUrl, Modal, App, Editor, MarkdownView, TFile, ButtonComponent } from "obsidian";
+import { Plugin, PluginSettingTab, Setting, Notice, requestUrl, Modal, App, Editor, MarkdownView, TFile, TFolder, ButtonComponent, base64ToArrayBuffer } from "obsidian";
 import { PresetManager } from "./presetManager";
 import { z } from "zod";
 import { Mistral } from "@mistralai/mistralai";
@@ -27,6 +27,8 @@ interface AIOcrSettings {
     defaultPreset: string;
     openRouterApiKey: string;
     openRouterModel: string;
+    extractImages: boolean;
+    imageSubfolder: string;
 }
 
 const DEFAULT_SETTINGS: AIOcrSettings = {
@@ -35,8 +37,16 @@ const DEFAULT_SETTINGS: AIOcrSettings = {
     saveLocation: "cursor",
     defaultPreset: "Academic Blue",
     openRouterApiKey: "",
-    openRouterModel: "google/gemini-2.0-flash-exp:free"
+    openRouterModel: "google/gemini-2.0-flash-exp:free",
+    extractImages: true,
+    imageSubfolder: "assets"
 };
+
+// OCR Result Interface
+interface OCRResult {
+    markdown: string;
+    images: { [id: string]: string };  // id -> base64 data
+}
 
 // Zod Schema for Structured Output
 const FormattedResponseSchema = z.object({
@@ -131,7 +141,7 @@ export default class AIOcrFormatterPlugin extends Plugin {
 
     // ==================== MISTRAL OCR ====================
     // ==================== MISTRAL OCR (SDK Implementation) ====================
-    async performMistralOCR(base64Data: string, mimeType: string): Promise<string> {
+    async performMistralOCR(base64Data: string, mimeType: string): Promise<OCRResult> {
         if (!this.settings.mistralApiKey) {
             throw new Error("Mistral API Key not configured");
         }
@@ -182,25 +192,80 @@ export default class AIOcrFormatterPlugin extends Plugin {
                     type: "document_url",
                     documentUrl: signedUrl.url,
                 },
-                includeImageBase64: true
+                includeImageBase64: this.settings.extractImages
             });
 
-            // 5. Parse Results
+            // 5. Parse Results - Extract both markdown and images
             let markdown = "";
+            const images: { [id: string]: string } = {};
+
             if (ocrResponse && ocrResponse.pages) {
-                ocrResponse.pages.forEach((page, index) => {
+                ocrResponse.pages.forEach((page: any, index: number) => {
                     if (index > 0) markdown += "\n\n---\n\n";
                     markdown += page.markdown || "";
+
+                    // Extract images if enabled
+                    if (this.settings.extractImages && page.images && page.images.length > 0) {
+                        page.images.forEach((image: any) => {
+                            const imageName = image.id;
+                            let base64Data = image.imageBase64 || "";
+                            // Strip data URL prefix if present
+                            if (base64Data.startsWith("data:")) {
+                                base64Data = base64Data.split(",")[1];
+                            }
+                            if (base64Data) {
+                                images[imageName] = base64Data;
+                            }
+                        });
+                    }
                 });
             }
 
-            return markdown.trim();
+            return { markdown: markdown.trim(), images };
 
         } catch (error: any) {
             console.error("Mistral SDK Error:", error);
-            // Handle SDK specific errors if needed
             throw new Error(`Mistral OCR Failed: ${error.message}`);
         }
+    }
+
+    // ==================== IMAGE SAVING ====================
+    async saveOCRImages(images: { [id: string]: string }, basePath: string): Promise<{ [id: string]: string }> {
+        const savedPaths: { [id: string]: string } = {};
+
+        if (Object.keys(images).length === 0) return savedPaths;
+
+        // Create subfolder if needed
+        let targetFolder = basePath;
+        if (this.settings.imageSubfolder) {
+            targetFolder = `${basePath}/${this.settings.imageSubfolder}`;
+            const folder = this.app.vault.getAbstractFileByPath(targetFolder);
+            if (!(folder instanceof TFolder)) {
+                await this.app.vault.createFolder(targetFolder);
+            }
+        }
+
+        for (const [imageName, base64Data] of Object.entries(images)) {
+            try {
+                const imagePath = `${targetFolder}/${imageName}`;
+                const arrayBuffer = base64ToArrayBuffer(base64Data);
+
+                // Check if file exists
+                const existingFile = this.app.vault.getAbstractFileByPath(imagePath);
+                if (existingFile instanceof TFile) {
+                    await this.app.vault.modifyBinary(existingFile, arrayBuffer);
+                } else {
+                    await this.app.vault.createBinary(imagePath, arrayBuffer);
+                }
+
+                savedPaths[imageName] = imagePath;
+            } catch (error: any) {
+                console.error(`Failed to save image ${imageName}:`, error);
+            }
+        }
+
+        new Notice(`📷 Saved ${Object.keys(savedPaths).length} images`);
+        return savedPaths;
     }
 
     // ==================== CORE FORMATTING (WITH ZOD) ====================
@@ -293,11 +358,19 @@ export default class AIOcrFormatterPlugin extends Plugin {
     // ==================== PIPELINE ====================
     async processImage(base64Data: string, mimeType: string, modelOverride?: string, customInstruction?: string): Promise<string | null> {
         try {
-            const ocrText = await this.performMistralOCR(base64Data, mimeType);
-            if (!ocrText) throw new Error("Empty OCR Result");
+            const ocrResult = await this.performMistralOCR(base64Data, mimeType);
+            if (!ocrResult.markdown) throw new Error("Empty OCR Result");
+
+            // Save images if extracted
+            if (Object.keys(ocrResult.images).length > 0) {
+                // Get current file's folder as base path
+                const activeFile = this.app.workspace.getActiveFile();
+                const basePath = activeFile?.parent?.path || "";
+                await this.saveOCRImages(ocrResult.images, basePath);
+            }
 
             new Notice("✅ OCR complete! Formatting...");
-            const formatted = await this.formatText(ocrText, modelOverride, customInstruction);
+            const formatted = await this.formatText(ocrResult.markdown, modelOverride, customInstruction);
             return formatted;
         } catch (error: any) {
             new Notice(`❌ Error: ${error.message}`);
@@ -397,6 +470,30 @@ class AIOcrSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }))
             .addButton(b => b.setButtonText("Test").onClick(() => { /* Add test logic */ }));
+
+        // ==================== IMAGE EXTRACTION ====================
+        containerEl.createEl('h3', { text: 'Image Extraction' });
+
+        new Setting(containerEl)
+            .setName('Extract Images')
+            .setDesc('Save images from OCR response to vault')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.extractImages)
+                .onChange(async (value) => {
+                    this.plugin.settings.extractImages = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Image Subfolder')
+            .setDesc('Subfolder for saved images (e.g., "assets"). Leave empty to save in same folder.')
+            .addText(text => text
+                .setPlaceholder('assets')
+                .setValue(this.plugin.settings.imageSubfolder)
+                .onChange(async (value) => {
+                    this.plugin.settings.imageSubfolder = value;
+                    await this.plugin.saveSettings();
+                }));
 
         // Preset Config
         new Setting(containerEl)
@@ -657,8 +754,14 @@ class OCRModal extends Modal {
                     rightActions.createEl('span', { text: '⏳ ...' });
 
                     try {
-                        const text = await this.plugin.performMistralOCR(this.fileData, this.fileMimeType);
-                        this.outputResult(text);
+                        const ocrResult = await this.plugin.performMistralOCR(this.fileData, this.fileMimeType);
+                        // Save images if extracted
+                        if (Object.keys(ocrResult.images).length > 0) {
+                            const activeFile = this.plugin.app.workspace.getActiveFile();
+                            const basePath = activeFile?.parent?.path || "";
+                            await this.plugin.saveOCRImages(ocrResult.images, basePath);
+                        }
+                        this.outputResult(ocrResult.markdown);
                         this.close();
                     } catch (e) {
                         new Notice("OCR Failed: " + e);
