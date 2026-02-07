@@ -1,5 +1,6 @@
 import { Plugin, PluginSettingTab, Setting, Notice, requestUrl, Modal, App, Editor, MarkdownView, TFile, TFolder, ButtonComponent, base64ToArrayBuffer } from "obsidian";
 import { PresetManager } from "./presetManager";
+import { AIOcrSettingTab } from "./settingsTab";
 import { z } from "zod";
 import { Mistral } from "@mistralai/mistralai";
 
@@ -230,7 +231,7 @@ export default class AIOcrFormatterPlugin extends Plugin {
     }
 
     // ==================== IMAGE SAVING ====================
-    async saveOCRImages(images: { [id: string]: string }, basePath: string): Promise<{ [id: string]: string }> {
+    async saveOCRImages(images: { [id: string]: string }, basePath: string, sourceFileName?: string): Promise<{ [id: string]: string }> {
         const savedPaths: { [id: string]: string } = {};
 
         if (Object.keys(images).length === 0) return savedPaths;
@@ -245,9 +246,15 @@ export default class AIOcrFormatterPlugin extends Plugin {
             }
         }
 
+        // Create filename prefix from source file (sanitize for filesystem)
+        const prefix = sourceFileName
+            ? sourceFileName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_') + '_'
+            : '';
+
         for (const [imageName, base64Data] of Object.entries(images)) {
             try {
-                const imagePath = `${targetFolder}/${imageName}`;
+                const prefixedName = `${prefix}${imageName}`;
+                const imagePath = `${targetFolder}/${prefixedName}`;
                 const arrayBuffer = base64ToArrayBuffer(base64Data);
 
                 // Check if file exists
@@ -258,6 +265,7 @@ export default class AIOcrFormatterPlugin extends Plugin {
                     await this.app.vault.createBinary(imagePath, arrayBuffer);
                 }
 
+                // Map original OCR image ID to saved path
                 savedPaths[imageName] = imagePath;
             } catch (error: any) {
                 console.error(`Failed to save image ${imageName}:`, error);
@@ -300,10 +308,11 @@ export default class AIOcrFormatterPlugin extends Plugin {
         const zodInstruction = `
         output should be valid JSON matching this schema:
         {
-          "formatted_markdown": "string (The formatted content. Use Standard Markdown headers (#, ##). DO NOT use HTML tags like <details>, <summary>, or <div>. DO NOT repeat content. Use proper Callouts > [!...])",
+          "formatted_markdown": "string (The formatted content. Use Standard Markdown headers (#, ##). DO NOT use HTML tags like <details>, <summary>, or <div>. DO NOT repeat content. Use proper Callouts > [!...]. IMPORTANT: PRESERVE ALL IMAGE EMBEDS exactly as they appear - do not remove or modify ![alt](filename) or ![[filename]] syntax.)",
           "confidence_score": "number (0-1)"
         }
         Response MUST be pure JSON. Do not wrap in markdown code blocks.
+        CRITICAL: If the input contains image references like ![...](img-0.jpeg), you MUST include them in the output at appropriate locations.
         `;
 
         const fullSystemPrompt = `${systemPrompt}\n\n${zodInstruction}`;
@@ -362,21 +371,69 @@ export default class AIOcrFormatterPlugin extends Plugin {
             if (!ocrResult.markdown) throw new Error("Empty OCR Result");
 
             // Save images if extracted
+            let savedImagePaths: { [id: string]: string } = {};
             if (Object.keys(ocrResult.images).length > 0) {
                 // Get current file's folder as base path
                 const activeFile = this.app.workspace.getActiveFile();
                 const basePath = activeFile?.parent?.path || "";
-                await this.saveOCRImages(ocrResult.images, basePath);
+                savedImagePaths = await this.saveOCRImages(ocrResult.images, basePath, activeFile?.basename);
             }
 
             new Notice("✅ OCR complete! Formatting...");
-            const formatted = await this.formatText(ocrResult.markdown, modelOverride, customInstruction);
+            let formatted = await this.formatText(ocrResult.markdown, modelOverride, customInstruction);
+
+            // Post-process: ensure image embeds are present
+            if (formatted && Object.keys(savedImagePaths).length > 0) {
+                formatted = this.ensureImageEmbeds(formatted, savedImagePaths);
+            }
+
             return formatted;
         } catch (error: any) {
             new Notice(`❌ Error: ${error.message}`);
             this.clearStatus();
             return null;
         }
+    }
+
+    // ==================== IMAGE EMBED POST-PROCESSOR ====================
+    ensureImageEmbeds(text: string, savedPaths: { [id: string]: string }): string {
+        // Collect all image IDs that should be present
+        const expectedImages = Object.keys(savedPaths);
+        if (expectedImages.length === 0) return text;
+
+        // 1. Fix malformed image embeds (various syntax errors)
+        // Convert ![...](filename) to ![[path]] (Obsidian wikilink)
+        for (const [imageId, fullPath] of Object.entries(savedPaths)) {
+            // Match standard markdown: ![alt](img-0.jpeg) or ![](img-0.jpeg)
+            const mdPattern = new RegExp(`!\\[[^\\]]*\\]\\(${imageId.replace('.', '\\.')}\\)`, 'g');
+            text = text.replace(mdPattern, `![[${fullPath}]]`);
+
+            // Match already-correct wikilinks with just filename: ![[img-0.jpeg]]
+            const wikiPattern = new RegExp(`!\\[\\[${imageId.replace('.', '\\.')}\\]\\]`, 'g');
+            text = text.replace(wikiPattern, `![[${fullPath}]]`);
+        }
+
+        // 2. Check which images are now present
+        const presentImages: Set<string> = new Set();
+        for (const imageId of expectedImages) {
+            const fullPath = savedPaths[imageId];
+            if (text.includes(`![[${fullPath}]]`) || text.includes(`![[${imageId}]]`)) {
+                presentImages.add(imageId);
+            }
+        }
+
+        // 3. Re-inject missing images at the end
+        const missingImages = expectedImages.filter(id => !presentImages.has(id));
+        if (missingImages.length > 0) {
+            text += "\n\n---\n\n## Extracted Images\n\n";
+            for (const imageId of missingImages) {
+                const fullPath = savedPaths[imageId];
+                text += `![[${fullPath}]]\n\n`;
+            }
+            new Notice(`📷 Re-injected ${missingImages.length} missing images`);
+        }
+
+        return text;
     }
 
     cleanLatexDelimiters(text: string): string {
@@ -409,107 +466,6 @@ export default class AIOcrFormatterPlugin extends Plugin {
 }
 
 // ==================== UI COMPONENTS ====================
-
-class AIOcrSettingTab extends PluginSettingTab {
-    plugin: AIOcrFormatterPlugin;
-
-    constructor(app: App, plugin: AIOcrFormatterPlugin) {
-        super(app, plugin);
-        this.plugin = plugin;
-    }
-
-    display(): void {
-        const { containerEl } = this;
-        containerEl.empty();
-        containerEl.createEl('h2', { text: '📄 AI OCR Formatter Settings' });
-
-        const provider = this.plugin.getProvider();
-        if (provider) {
-            containerEl.createEl('h3', { text: '🔌 OpenRouter Provider Connected' });
-            containerEl.createDiv({ text: "✅ Using shared API key and models.", cls: "setting-item-description" });
-        } else {
-            containerEl.createEl('h3', { text: '🔌 Standalone Configuration' });
-            const warning = containerEl.createDiv({ cls: 'setting-item-description' });
-            warning.style.color = 'var(--text-error)';
-            warning.style.fontWeight = 'bold';
-            warning.style.marginBottom = '15px';
-            warning.innerHTML = "⚠️ Works best with <b>OpenRouter Provider</b> plugin.<br>You are currently in standalone mode.";
-
-            new Setting(containerEl)
-                .setName("OpenRouter API Key")
-                .setDesc("For Formatting (LLM)")
-                .addText(text => text
-                    .setPlaceholder("sk-or-...")
-                    .setValue(this.plugin.settings.openRouterApiKey)
-                    .onChange(async v => {
-                        this.plugin.settings.openRouterApiKey = v;
-                        await this.plugin.saveSettings();
-                    }));
-
-            new Setting(containerEl)
-                .setName("Fallback Model")
-                .setDesc("Model ID for formatting")
-                .addText(text => text
-                    .setPlaceholder("google/gemini-2.0-flash-exp:free")
-                    .setValue(this.plugin.settings.openRouterModel)
-                    .onChange(async v => {
-                        this.plugin.settings.openRouterModel = v;
-                        await this.plugin.saveSettings();
-                    }));
-        }
-
-        // Mistral Key
-        new Setting(containerEl)
-            .setName('Mistral API Key')
-            .setDesc('For OCR Vision')
-            .addText(text => text
-                .setPlaceholder('API Key')
-                .setValue(this.plugin.settings.mistralApiKey)
-                .onChange(async (value) => {
-                    this.plugin.settings.mistralApiKey = value;
-                    await this.plugin.saveSettings();
-                }))
-            .addButton(b => b.setButtonText("Test").onClick(() => { /* Add test logic */ }));
-
-        // ==================== IMAGE EXTRACTION ====================
-        containerEl.createEl('h3', { text: 'Image Extraction' });
-
-        new Setting(containerEl)
-            .setName('Extract Images')
-            .setDesc('Save images from OCR response to vault')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.extractImages)
-                .onChange(async (value) => {
-                    this.plugin.settings.extractImages = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        new Setting(containerEl)
-            .setName('Image Subfolder')
-            .setDesc('Subfolder for saved images (e.g., "assets"). Leave empty to save in same folder.')
-            .addText(text => text
-                .setPlaceholder('assets')
-                .setValue(this.plugin.settings.imageSubfolder)
-                .onChange(async (value) => {
-                    this.plugin.settings.imageSubfolder = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        // Preset Config
-        new Setting(containerEl)
-            .setName('Default Preset')
-            .addDropdown(async (d) => {
-                const presets = await this.plugin.presetManager.getPresets();
-                presets.forEach(p => d.addOption(p, p));
-                d.setValue(this.plugin.settings.defaultPreset);
-                d.onChange(async (v) => {
-                    this.plugin.settings.defaultPreset = v;
-                    await this.plugin.saveSettings();
-                });
-            });
-    }
-}
-
 
 class OCRModal extends Modal {
     plugin: AIOcrFormatterPlugin;
@@ -759,7 +715,7 @@ class OCRModal extends Modal {
                         if (Object.keys(ocrResult.images).length > 0) {
                             const activeFile = this.plugin.app.workspace.getActiveFile();
                             const basePath = activeFile?.parent?.path || "";
-                            await this.plugin.saveOCRImages(ocrResult.images, basePath);
+                            await this.plugin.saveOCRImages(ocrResult.images, basePath, activeFile?.basename);
                         }
                         this.outputResult(ocrResult.markdown);
                         this.close();

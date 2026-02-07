@@ -39028,7 +39028,7 @@ __export(main_exports, {
   default: () => AIOcrFormatterPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/presetManager.ts
 var import_obsidian = require("obsidian");
@@ -39156,6 +39156,97 @@ Emphasis on visual explanations with Mermaid diagrams.
       await this.app.workspace.openLinkText(path, "", true);
     } else {
       new import_obsidian.Notice(`Preset file not found: ${name}`);
+    }
+  }
+};
+
+// src/settingsTab.ts
+var import_obsidian2 = require("obsidian");
+var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.addClass("ai-ocr-settings");
+    containerEl.createEl("h2", { text: "\u{1F4C4} AI OCR Formatter" });
+    const provider = this.plugin.getProvider();
+    this.createCollapsibleSection(containerEl, "Provider", "plug", true, () => {
+      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+      if (provider) {
+        const row = content.createDiv({ cls: "ai-settings-row" });
+        const left = row.createDiv({ cls: "ai-settings-row-info" });
+        const statusIcon = left.createSpan({ cls: "ai-status-icon connected" });
+        (0, import_obsidian2.setIcon)(statusIcon, "check-circle");
+        left.createSpan({ text: "OpenRouter Provider Connected", cls: "ai-settings-row-name" });
+        const right = row.createDiv({ cls: "ai-settings-row-action" });
+        right.createSpan({ text: "Using shared API key", cls: "ai-settings-row-value" });
+      } else {
+        const warningDiv = content.createDiv({ cls: "ai-settings-warning" });
+        const icon = warningDiv.createSpan({ cls: "ai-warning-icon" });
+        (0, import_obsidian2.setIcon)(icon, "alert-triangle");
+        warningDiv.createSpan({ text: "Standalone Mode - Install OpenRouter Provider for best experience" });
+        new import_obsidian2.Setting(content).setName("OpenRouter API Key").setDesc("For Formatting (LLM)").addText((text) => text.setPlaceholder("sk-or-...").setValue(this.plugin.settings.openRouterApiKey).onChange(async (v) => {
+          this.plugin.settings.openRouterApiKey = v;
+          await this.plugin.saveSettings();
+        }));
+        new import_obsidian2.Setting(content).setName("Fallback Model").setDesc("Model ID for formatting").addText((text) => text.setPlaceholder("google/gemini-2.0-flash-exp:free").setValue(this.plugin.settings.openRouterModel).onChange(async (v) => {
+          this.plugin.settings.openRouterModel = v;
+          await this.plugin.saveSettings();
+        }));
+      }
+    });
+    this.createCollapsibleSection(containerEl, "Mistral OCR Vision", "eye", true, () => {
+      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+      new import_obsidian2.Setting(content).setName("Mistral API Key").setDesc("Required for OCR extraction").addText((text) => text.setPlaceholder("API Key").setValue(this.plugin.settings.mistralApiKey).onChange(async (value) => {
+        this.plugin.settings.mistralApiKey = value;
+        await this.plugin.saveSettings();
+      }));
+    });
+    this.createCollapsibleSection(containerEl, "Image Extraction", "image", true, () => {
+      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+      new import_obsidian2.Setting(content).setName("Extract Images").setDesc("Save images from OCR response to vault").addToggle((toggle) => toggle.setValue(this.plugin.settings.extractImages).onChange(async (value) => {
+        this.plugin.settings.extractImages = value;
+        await this.plugin.saveSettings();
+      }));
+      new import_obsidian2.Setting(content).setName("Image Subfolder").setDesc("Folder for saved images").addText((text) => text.setPlaceholder("assets").setValue(this.plugin.settings.imageSubfolder).onChange(async (value) => {
+        this.plugin.settings.imageSubfolder = value;
+        await this.plugin.saveSettings();
+      }));
+    });
+    this.createCollapsibleSection(containerEl, "Formatting Defaults", "settings", true, () => {
+      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+      new import_obsidian2.Setting(content).setName("Default Preset").addDropdown(async (d) => {
+        const presets = await this.plugin.presetManager.getPresets();
+        presets.forEach((p) => d.addOption(p, p));
+        d.setValue(this.plugin.settings.defaultPreset);
+        d.onChange(async (v) => {
+          this.plugin.settings.defaultPreset = v;
+          await this.plugin.saveSettings();
+        });
+      });
+    });
+  }
+  createCollapsibleSection(container, title, icon, openByDefault, buildContent) {
+    const section = container.createDiv({ cls: "ai-settings-section ai-collapsible" });
+    if (openByDefault)
+      section.addClass("open");
+    const header = section.createDiv({ cls: "ai-settings-section-header clickable" });
+    const iconEl = header.createSpan({ cls: "ai-settings-section-icon" });
+    (0, import_obsidian2.setIcon)(iconEl, icon);
+    header.createSpan({ text: title });
+    const chevron = header.createSpan({ cls: "ai-chevron" });
+    (0, import_obsidian2.setIcon)(chevron, "chevron-down");
+    const contentWrapper = section.createDiv({ cls: "ai-collapsible-content" });
+    header.addEventListener("click", () => {
+      section.toggleClass("open", !section.hasClass("open"));
+    });
+    buildContent();
+    const lastChild = container.lastElementChild;
+    if (lastChild && lastChild !== section) {
+      contentWrapper.appendChild(lastChild);
     }
   }
 };
@@ -43228,7 +43319,7 @@ var FormattedResponseSchema = external_exports.object({
 });
 var ACADEMIC_BLUE_PROMPT = `You are an expert academic note formatter.
 Formatted markdown must be returned in JSON structure matching the schema.`;
-var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
+var AIOcrFormatterPlugin = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.currentPreset = "";
@@ -43255,7 +43346,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
       editorCallback: async (editor) => {
         const selection = editor.getSelection();
         if (!selection || selection.trim().length < 5) {
-          new import_obsidian2.Notice("\u26A0\uFE0F Please select some text to format.");
+          new import_obsidian3.Notice("\u26A0\uFE0F Please select some text to format.");
           return;
         }
         const formatted = await this.formatText(selection, void 0, void 0, editor);
@@ -43282,7 +43373,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
     const apiKey = this.settings.openRouterApiKey;
     if (!apiKey)
       throw new Error("API Key missing. Enable OpenRouter Provider OR set key in settings.");
-    return (0, import_obsidian2.requestUrl)({
+    return (0, import_obsidian3.requestUrl)({
       url: "https://openrouter.ai/api/v1/chat/completions",
       method: "POST",
       headers: {
@@ -43301,7 +43392,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
       throw new Error("Mistral API Key not configured");
     }
     this.setStatus("Uploading to Mistral...");
-    new import_obsidian2.Notice("cloud_upload Uploading to Mistral...");
+    new import_obsidian3.Notice("cloud_upload Uploading to Mistral...");
     try {
       const client = new import_mistralai.Mistral({ apiKey: this.settings.mistralApiKey });
       const ext = mimeType.split("/")[1] || "bin";
@@ -43326,7 +43417,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
         fileId: uploadedFile.id
       });
       this.setStatus("Running OCR...");
-      new import_obsidian2.Notice("\u{1F50D} Processing OCR...");
+      new import_obsidian3.Notice("\u{1F50D} Processing OCR...");
       const ocrResponse = await client.ocr.process({
         model: "mistral-ocr-latest",
         document: {
@@ -43363,7 +43454,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
     }
   }
   // ==================== IMAGE SAVING ====================
-  async saveOCRImages(images, basePath) {
+  async saveOCRImages(images, basePath, sourceFileName) {
     const savedPaths = {};
     if (Object.keys(images).length === 0)
       return savedPaths;
@@ -43371,16 +43462,18 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
     if (this.settings.imageSubfolder) {
       targetFolder = `${basePath}/${this.settings.imageSubfolder}`;
       const folder = this.app.vault.getAbstractFileByPath(targetFolder);
-      if (!(folder instanceof import_obsidian2.TFolder)) {
+      if (!(folder instanceof import_obsidian3.TFolder)) {
         await this.app.vault.createFolder(targetFolder);
       }
     }
+    const prefix = sourceFileName ? sourceFileName.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_") + "_" : "";
     for (const [imageName, base64Data] of Object.entries(images)) {
       try {
-        const imagePath = `${targetFolder}/${imageName}`;
-        const arrayBuffer = (0, import_obsidian2.base64ToArrayBuffer)(base64Data);
+        const prefixedName = `${prefix}${imageName}`;
+        const imagePath = `${targetFolder}/${prefixedName}`;
+        const arrayBuffer = (0, import_obsidian3.base64ToArrayBuffer)(base64Data);
         const existingFile = this.app.vault.getAbstractFileByPath(imagePath);
-        if (existingFile instanceof import_obsidian2.TFile) {
+        if (existingFile instanceof import_obsidian3.TFile) {
           await this.app.vault.modifyBinary(existingFile, arrayBuffer);
         } else {
           await this.app.vault.createBinary(imagePath, arrayBuffer);
@@ -43390,7 +43483,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
         console.error(`Failed to save image ${imageName}:`, error);
       }
     }
-    new import_obsidian2.Notice(`\u{1F4F7} Saved ${Object.keys(savedPaths).length} images`);
+    new import_obsidian3.Notice(`\u{1F4F7} Saved ${Object.keys(savedPaths).length} images`);
     return savedPaths;
   }
   // ==================== CORE FORMATTING (WITH ZOD) ====================
@@ -43406,7 +43499,7 @@ var AIOcrFormatterPlugin = class extends import_obsidian2.Plugin {
       fetcher = this.localFetch.bind(this);
     }
     this.setStatus("Formatting...");
-    new import_obsidian2.Notice(`\u{1F3A8} Formatting with ${model.split("/").pop()}...`);
+    new import_obsidian3.Notice(`\u{1F3A8} Formatting with ${model.split("/").pop()}...`);
     const presetName = this.currentPreset || this.settings.defaultPreset;
     let systemPrompt = await this.presetManager.getPresetContent(presetName);
     if (!systemPrompt)
@@ -43420,10 +43513,11 @@ ${customInstruction}`;
     const zodInstruction = `
         output should be valid JSON matching this schema:
         {
-          "formatted_markdown": "string (The formatted content. Use Standard Markdown headers (#, ##). DO NOT use HTML tags like <details>, <summary>, or <div>. DO NOT repeat content. Use proper Callouts > [!...])",
+          "formatted_markdown": "string (The formatted content. Use Standard Markdown headers (#, ##). DO NOT use HTML tags like <details>, <summary>, or <div>. DO NOT repeat content. Use proper Callouts > [!...]. IMPORTANT: PRESERVE ALL IMAGE EMBEDS exactly as they appear - do not remove or modify ![alt](filename) or ![[filename]] syntax.)",
           "confidence_score": "number (0-1)"
         }
         Response MUST be pure JSON. Do not wrap in markdown code blocks.
+        CRITICAL: If the input contains image references like ![...](img-0.jpeg), you MUST include them in the output at appropriate locations.
         `;
     const fullSystemPrompt = `${systemPrompt}
 
@@ -43449,18 +43543,18 @@ ${rawText}
         let formattedMarkdown = result.formatted_markdown;
         formattedMarkdown = this.cleanLatexDelimiters(formattedMarkdown);
         if (editor) {
-          new import_obsidian2.Notice("\u2705 formatted!");
+          new import_obsidian3.Notice("\u2705 formatted!");
         }
         this.clearStatus();
         return formattedMarkdown;
       } catch (validationError) {
         console.error("Zod Validation Failed:", validationError);
-        new import_obsidian2.Notice("\u26A0\uFE0F Formatting structure invalid. Returning raw output.");
+        new import_obsidian3.Notice("\u26A0\uFE0F Formatting structure invalid. Returning raw output.");
         this.clearStatus();
         return content;
       }
     } catch (error) {
-      new import_obsidian2.Notice(`\u274C Formatting failed: ${error.message}`);
+      new import_obsidian3.Notice(`\u274C Formatting failed: ${error.message}`);
       this.clearStatus();
       return null;
     }
@@ -43472,19 +43566,54 @@ ${rawText}
       const ocrResult = await this.performMistralOCR(base64Data, mimeType);
       if (!ocrResult.markdown)
         throw new Error("Empty OCR Result");
+      let savedImagePaths = {};
       if (Object.keys(ocrResult.images).length > 0) {
         const activeFile = this.app.workspace.getActiveFile();
         const basePath = ((_a = activeFile == null ? void 0 : activeFile.parent) == null ? void 0 : _a.path) || "";
-        await this.saveOCRImages(ocrResult.images, basePath);
+        savedImagePaths = await this.saveOCRImages(ocrResult.images, basePath, activeFile == null ? void 0 : activeFile.basename);
       }
-      new import_obsidian2.Notice("\u2705 OCR complete! Formatting...");
-      const formatted = await this.formatText(ocrResult.markdown, modelOverride, customInstruction);
+      new import_obsidian3.Notice("\u2705 OCR complete! Formatting...");
+      let formatted = await this.formatText(ocrResult.markdown, modelOverride, customInstruction);
+      if (formatted && Object.keys(savedImagePaths).length > 0) {
+        formatted = this.ensureImageEmbeds(formatted, savedImagePaths);
+      }
       return formatted;
     } catch (error) {
-      new import_obsidian2.Notice(`\u274C Error: ${error.message}`);
+      new import_obsidian3.Notice(`\u274C Error: ${error.message}`);
       this.clearStatus();
       return null;
     }
+  }
+  // ==================== IMAGE EMBED POST-PROCESSOR ====================
+  ensureImageEmbeds(text, savedPaths) {
+    const expectedImages = Object.keys(savedPaths);
+    if (expectedImages.length === 0)
+      return text;
+    for (const [imageId, fullPath] of Object.entries(savedPaths)) {
+      const mdPattern = new RegExp(`!\\[[^\\]]*\\]\\(${imageId.replace(".", "\\.")}\\)`, "g");
+      text = text.replace(mdPattern, `![[${fullPath}]]`);
+      const wikiPattern = new RegExp(`!\\[\\[${imageId.replace(".", "\\.")}\\]\\]`, "g");
+      text = text.replace(wikiPattern, `![[${fullPath}]]`);
+    }
+    const presentImages = /* @__PURE__ */ new Set();
+    for (const imageId of expectedImages) {
+      const fullPath = savedPaths[imageId];
+      if (text.includes(`![[${fullPath}]]`) || text.includes(`![[${imageId}]]`)) {
+        presentImages.add(imageId);
+      }
+    }
+    const missingImages = expectedImages.filter((id) => !presentImages.has(id));
+    if (missingImages.length > 0) {
+      text += "\n\n---\n\n## Extracted Images\n\n";
+      for (const imageId of missingImages) {
+        const fullPath = savedPaths[imageId];
+        text += `![[${fullPath}]]
+
+`;
+      }
+      new import_obsidian3.Notice(`\u{1F4F7} Re-injected ${missingImages.length} missing images`);
+    }
+    return text;
   }
   cleanLatexDelimiters(text) {
     if (!text)
@@ -43511,61 +43640,7 @@ $$`;
     this.setStatus("");
   }
 };
-var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
-  constructor(app, plugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("h2", { text: "\u{1F4C4} AI OCR Formatter Settings" });
-    const provider = this.plugin.getProvider();
-    if (provider) {
-      containerEl.createEl("h3", { text: "\u{1F50C} OpenRouter Provider Connected" });
-      containerEl.createDiv({ text: "\u2705 Using shared API key and models.", cls: "setting-item-description" });
-    } else {
-      containerEl.createEl("h3", { text: "\u{1F50C} Standalone Configuration" });
-      const warning = containerEl.createDiv({ cls: "setting-item-description" });
-      warning.style.color = "var(--text-error)";
-      warning.style.fontWeight = "bold";
-      warning.style.marginBottom = "15px";
-      warning.innerHTML = "\u26A0\uFE0F Works best with <b>OpenRouter Provider</b> plugin.<br>You are currently in standalone mode.";
-      new import_obsidian2.Setting(containerEl).setName("OpenRouter API Key").setDesc("For Formatting (LLM)").addText((text) => text.setPlaceholder("sk-or-...").setValue(this.plugin.settings.openRouterApiKey).onChange(async (v) => {
-        this.plugin.settings.openRouterApiKey = v;
-        await this.plugin.saveSettings();
-      }));
-      new import_obsidian2.Setting(containerEl).setName("Fallback Model").setDesc("Model ID for formatting").addText((text) => text.setPlaceholder("google/gemini-2.0-flash-exp:free").setValue(this.plugin.settings.openRouterModel).onChange(async (v) => {
-        this.plugin.settings.openRouterModel = v;
-        await this.plugin.saveSettings();
-      }));
-    }
-    new import_obsidian2.Setting(containerEl).setName("Mistral API Key").setDesc("For OCR Vision").addText((text) => text.setPlaceholder("API Key").setValue(this.plugin.settings.mistralApiKey).onChange(async (value) => {
-      this.plugin.settings.mistralApiKey = value;
-      await this.plugin.saveSettings();
-    })).addButton((b) => b.setButtonText("Test").onClick(() => {
-    }));
-    containerEl.createEl("h3", { text: "Image Extraction" });
-    new import_obsidian2.Setting(containerEl).setName("Extract Images").setDesc("Save images from OCR response to vault").addToggle((toggle) => toggle.setValue(this.plugin.settings.extractImages).onChange(async (value) => {
-      this.plugin.settings.extractImages = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian2.Setting(containerEl).setName("Image Subfolder").setDesc('Subfolder for saved images (e.g., "assets"). Leave empty to save in same folder.').addText((text) => text.setPlaceholder("assets").setValue(this.plugin.settings.imageSubfolder).onChange(async (value) => {
-      this.plugin.settings.imageSubfolder = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian2.Setting(containerEl).setName("Default Preset").addDropdown(async (d) => {
-      const presets = await this.plugin.presetManager.getPresets();
-      presets.forEach((p) => d.addOption(p, p));
-      d.setValue(this.plugin.settings.defaultPreset);
-      d.onChange(async (v) => {
-        this.plugin.settings.defaultPreset = v;
-        await this.plugin.saveSettings();
-      });
-    });
-  }
-};
-var OCRModal = class extends import_obsidian2.Modal {
+var OCRModal = class extends import_obsidian3.Modal {
   constructor(app, plugin) {
     super(app);
     this.fileData = null;
@@ -43585,7 +43660,7 @@ var OCRModal = class extends import_obsidian2.Modal {
       this.currentModel = provider.getModel("ai-ocr-formatter") || this.currentModel;
     }
     const settingsDiv = contentEl.createDiv({ cls: "ai-ocr-settings" });
-    new import_obsidian2.Setting(settingsDiv).setName("Formatting Style").setDesc("Rules for the AI Formatter").addDropdown(async (d) => {
+    new import_obsidian3.Setting(settingsDiv).setName("Formatting Style").setDesc("Rules for the AI Formatter").addDropdown(async (d) => {
       const presets = await this.plugin.presetManager.getPresets();
       presets.forEach((p) => d.addOption(p, p));
       let current = this.plugin.settings.defaultPreset;
@@ -43600,7 +43675,7 @@ var OCRModal = class extends import_obsidian2.Modal {
     } else {
       this.currentModel = this.plugin.settings.openRouterModel || this.currentModel;
     }
-    const modelSetting = new import_obsidian2.Setting(settingsDiv).setName("Formatting Model").addDropdown((d) => {
+    const modelSetting = new import_obsidian3.Setting(settingsDiv).setName("Formatting Model").addDropdown((d) => {
       const refreshOptions = () => {
         const favorites = provider && provider.getFavorites ? provider.getFavorites() : [];
         const currentVal = this.currentModel;
@@ -43735,9 +43810,9 @@ var OCRModal = class extends import_obsidian2.Modal {
     textArea.addEventListener("input", (e) => {
       this.customInstruction = e.target.value;
     });
-    new import_obsidian2.ButtonComponent(rightActions).setButtonText("Cancel").onClick(() => this.close());
+    new import_obsidian3.ButtonComponent(rightActions).setButtonText("Cancel").onClick(() => this.close());
     if (mode === "selection") {
-      new import_obsidian2.ButtonComponent(rightActions).setButtonText("Format").setCta().setIcon("highlighter").onClick(async () => {
+      new import_obsidian3.ButtonComponent(rightActions).setButtonText("Format").setCta().setIcon("highlighter").onClick(async () => {
         var _a;
         const sel = this.getActiveSelection();
         if (!sel)
@@ -43753,10 +43828,10 @@ var OCRModal = class extends import_obsidian2.Modal {
         }
       });
     } else {
-      new import_obsidian2.ButtonComponent(rightActions).setButtonText("OCR").setIcon("scan").setTooltip("Extract text only").onClick(async () => {
+      new import_obsidian3.ButtonComponent(rightActions).setButtonText("OCR").setIcon("scan").setTooltip("Extract text only").onClick(async () => {
         var _a;
         if (!this.fileData || !this.fileMimeType) {
-          new import_obsidian2.Notice("Please select a file first");
+          new import_obsidian3.Notice("Please select a file first");
           return;
         }
         rightActions.empty();
@@ -43766,18 +43841,18 @@ var OCRModal = class extends import_obsidian2.Modal {
           if (Object.keys(ocrResult.images).length > 0) {
             const activeFile = this.plugin.app.workspace.getActiveFile();
             const basePath = ((_a = activeFile == null ? void 0 : activeFile.parent) == null ? void 0 : _a.path) || "";
-            await this.plugin.saveOCRImages(ocrResult.images, basePath);
+            await this.plugin.saveOCRImages(ocrResult.images, basePath, activeFile == null ? void 0 : activeFile.basename);
           }
           this.outputResult(ocrResult.markdown);
           this.close();
         } catch (e) {
-          new import_obsidian2.Notice("OCR Failed: " + e);
+          new import_obsidian3.Notice("OCR Failed: " + e);
           this.close();
         }
       });
-      new import_obsidian2.ButtonComponent(rightActions).setButtonText("OCR & Format").setCta().setIcon("refresh-cw").onClick(async () => {
+      new import_obsidian3.ButtonComponent(rightActions).setButtonText("OCR & Format").setCta().setIcon("refresh-cw").onClick(async () => {
         if (!this.fileData || !this.fileMimeType) {
-          new import_obsidian2.Notice("Please select a file first");
+          new import_obsidian3.Notice("Please select a file first");
           return;
         }
         rightActions.empty();
@@ -43793,15 +43868,15 @@ var OCRModal = class extends import_obsidian2.Modal {
     }
   }
   getActiveSelection() {
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian2.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
     return view ? view.editor.getSelection() : null;
   }
   getEditor() {
-    const view = this.app.workspace.getActiveViewOfType(import_obsidian2.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
     return view ? view.editor : null;
   }
   async outputResult(content) {
-    const activeView = this.app.workspace.getActiveViewOfType(import_obsidian2.MarkdownView);
+    const activeView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
     if (activeView) {
       activeView.editor.replaceRange(content, activeView.editor.getCursor());
     } else {
