@@ -39216,6 +39216,13 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       }));
     });
+    this.createCollapsibleSection(containerEl, "Experimental", "flask", true, () => {
+      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+      new import_obsidian2.Setting(content).setName("Enable Streaming").setDesc("Stream formatted text in real-time (OpenRouter only)").addToggle((toggle) => toggle.setValue(this.plugin.settings.useStreaming).onChange(async (value) => {
+        this.plugin.settings.useStreaming = value;
+        await this.plugin.saveSettings();
+      }));
+    });
     this.createCollapsibleSection(containerEl, "Formatting Defaults", "settings", true, () => {
       const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
       new import_obsidian2.Setting(content).setName("Default Preset").addDropdown(async (d) => {
@@ -43311,7 +43318,8 @@ var DEFAULT_SETTINGS = {
   openRouterApiKey: "",
   openRouterModel: "google/gemini-2.0-flash-exp:free",
   extractImages: true,
-  imageSubfolder: "assets"
+  imageSubfolder: "assets",
+  useStreaming: false
 };
 var FormattedResponseSchema = external_exports.object({
   formatted_markdown: external_exports.string().describe("The OCR text formatted into standard Markdown following the rules."),
@@ -43487,16 +43495,14 @@ var AIOcrFormatterPlugin = class extends import_obsidian3.Plugin {
     return savedPaths;
   }
   // ==================== CORE FORMATTING (WITH ZOD) ====================
+  // ==================== CORE FORMATTING (WITH ZOD) ====================
   async formatText(rawText, modelOverride, customInstruction, editor = null) {
     const provider = this.getProvider();
     let model = modelOverride;
-    let fetcher;
     if (provider) {
       model = modelOverride || provider.getModel("ai-ocr-formatter");
-      fetcher = provider.fetchWithRetry.bind(provider);
     } else {
       model = modelOverride || this.settings.openRouterModel;
-      fetcher = this.localFetch.bind(this);
     }
     this.setStatus("Formatting...");
     new import_obsidian3.Notice(`\u{1F3A8} Formatting with ${model.split("/").pop()}...`);
@@ -43522,18 +43528,71 @@ ${customInstruction}`;
     const fullSystemPrompt = `${systemPrompt}
 
 ${zodInstruction}`;
-    try {
-      const response = await fetcher({
-        model,
-        messages: [
-          { role: "system", content: fullSystemPrompt },
-          { role: "user", content: `Format the following OCR text. Language: ${this.settings.language}.
+    const requestBody = {
+      model,
+      messages: [
+        { role: "system", content: fullSystemPrompt },
+        { role: "user", content: `Format the following OCR text. Language: ${this.settings.language}.
 
 ---
 ${rawText}
 ---` }
-        ]
+      ]
+    };
+    if (this.settings.useStreaming && provider && editor) {
+      return new Promise(async (resolve) => {
+        let fullBuffer = "";
+        let jsonStarted = false;
+        try {
+          const streamingSystemPrompt = `${systemPrompt}
+
+IMPORTANT: Output ONLY the formatted markdown. Do NOT wrap in JSON. Do NOT output explanation.`;
+          const streamingRequestBody = {
+            model,
+            messages: [
+              { role: "system", content: streamingSystemPrompt },
+              { role: "user", content: `Format the following OCR text. Language: ${this.settings.language}.
+
+---
+${rawText}
+---` }
+            ]
+          };
+          const startPos = editor.getCursor();
+          editor.replaceSelection("");
+          await provider.streamRequest(
+            streamingRequestBody,
+            (token) => {
+              editor.replaceRange(token, editor.getCursor());
+              fullBuffer += token;
+            },
+            (fullText) => {
+              this.clearStatus();
+              const cleaned = this.cleanLatexDelimiters(fullText);
+              resolve(cleaned);
+            },
+            (error) => {
+              new import_obsidian3.Notice(`\u274C Streaming failed: ${error.message}`);
+              this.clearStatus();
+              resolve(null);
+            },
+            (reasoning) => {
+            }
+          );
+        } catch (e) {
+          console.error("Streaming Init Error", e);
+          resolve(null);
+        }
       });
+    }
+    try {
+      let fetcher;
+      if (provider) {
+        fetcher = provider.fetchWithRetry.bind(provider);
+      } else {
+        fetcher = this.localFetch.bind(this);
+      }
+      const response = await fetcher(requestBody);
       let content = response.json.choices[0].message.content;
       content = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
       content = content.replace(/^```json\s*/, "").replace(/^```/, "").replace(/```$/, "");

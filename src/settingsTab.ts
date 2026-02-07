@@ -110,6 +110,22 @@ export class AIOcrSettingTab extends PluginSettingTab {
                     }));
         });
 
+        // ===== EXPERIMENTAL =====
+        this.createCollapsibleSection(containerEl, 'Experimental', 'flask', true, () => {
+            const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });
+
+            new Setting(content)
+                .setName('Enable Streaming')
+                .setDesc('Stream formatted text in real-time (OpenRouter only)')
+                .addToggle(toggle => toggle
+                    .setValue(this.plugin.settings.useStreaming)
+                    .onChange(async (value) => {
+                        this.plugin.settings.useStreaming = value;
+                        await this.plugin.saveSettings();
+                    }));
+        });
+
+
         // ===== DEFAULTS =====
         this.createCollapsibleSection(containerEl, 'Formatting Defaults', 'settings', true, () => {
             const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });

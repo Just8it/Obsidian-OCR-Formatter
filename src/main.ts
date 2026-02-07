@@ -17,7 +17,15 @@ interface OpenRouterProviderPlugin {
     getModel(pluginId: string): string;
     openModelSelector(pluginId: string, callback: () => void): void;
     fetchCredits(): Promise<string | null>;
+    fetchCredits(): Promise<string | null>;
     fetchWithRetry(options: any): Promise<any>;
+    streamRequest(
+        options: any,
+        onToken: (token: string) => void,
+        onComplete: (fullText: string) => void,
+        onError: (error: any) => void,
+        onReasoning?: (reasoning: string) => void
+    ): Promise<void>;
 }
 
 // Plugin Settings
@@ -30,6 +38,7 @@ interface AIOcrSettings {
     openRouterModel: string;
     extractImages: boolean;
     imageSubfolder: string;
+    useStreaming: boolean;
 }
 
 const DEFAULT_SETTINGS: AIOcrSettings = {
@@ -40,7 +49,8 @@ const DEFAULT_SETTINGS: AIOcrSettings = {
     openRouterApiKey: "",
     openRouterModel: "google/gemini-2.0-flash-exp:free",
     extractImages: true,
-    imageSubfolder: "assets"
+    imageSubfolder: "assets",
+    useStreaming: false
 };
 
 // OCR Result Interface
@@ -277,18 +287,15 @@ export default class AIOcrFormatterPlugin extends Plugin {
     }
 
     // ==================== CORE FORMATTING (WITH ZOD) ====================
+    // ==================== CORE FORMATTING (WITH ZOD) ====================
     async formatText(rawText: string, modelOverride?: string, customInstruction?: string, editor: Editor | null = null): Promise<string | null> {
         const provider = this.getProvider();
 
         let model = modelOverride;
-        let fetcher: (opts: any) => Promise<any>;
-
         if (provider) {
             model = modelOverride || provider.getModel('ai-ocr-formatter');
-            fetcher = provider.fetchWithRetry.bind(provider);
         } else {
             model = modelOverride || this.settings.openRouterModel;
-            fetcher = this.localFetch.bind(this);
         }
 
         this.setStatus("Formatting...");
@@ -316,15 +323,95 @@ export default class AIOcrFormatterPlugin extends Plugin {
         `;
 
         const fullSystemPrompt = `${systemPrompt}\n\n${zodInstruction}`;
+        const requestBody = {
+            model: model,
+            messages: [
+                { role: "system", content: fullSystemPrompt },
+                { role: "user", content: `Format the following OCR text. Language: ${this.settings.language}.\n\n---\n${rawText}\n---` }
+            ]
+        };
 
-        try {
-            const response = await fetcher({
-                model: model,
-                messages: [
-                    { role: "system", content: fullSystemPrompt },
-                    { role: "user", content: `Format the following OCR text. Language: ${this.settings.language}.\n\n---\n${rawText}\n---` }
-                ]
+        // --- STREAMING PIPELINE ---
+        if (this.settings.useStreaming && provider && editor) {
+            // Streaming requires a provider and an active editor to update
+            return new Promise<string | null>(async (resolve) => {
+                let fullBuffer = "";
+                // Use a marker to track if we found the JSON start
+                let jsonStarted = false;
+
+                try {
+                    // We need to handle the JSON structure streaming. 
+                    // Since the model outputs JSON, streaming it directly to the editor is tricky because we receive `{"formatted_markdown": "H...`
+                    // Strategy: We can't easily stream structured JSON *content* directly to markdown editor in real-time without parsing partial JSON.
+                    // However, we can stream the *raw* output for feedback, OR we can ask the user if they want raw streaming vs structured.
+                    // Given the goal is "real-time feedback", watching JSON chars appear is less useful.
+
+                    // ALTERNATIVE: For streaming, we might skip the strict JSON enforcement or try to parse on the fly?
+                    // Actually, if we want real-time streaming updates in the editor, we should probably output MD directly, NOT JSON.
+                    // BUT our whole pipeline relies on Zod for structure.
+
+                    // Compromise: We stream the raw response to a Notice or Status Bar? No, that's not "streaming".
+                    // Better approach for this tasks:
+                    // If streaming is enabled, we instruct the model to output PLAIN MARKDOWN instead of JSON.
+
+                    const streamingSystemPrompt = `${systemPrompt}\n\nIMPORTANT: Output ONLY the formatted markdown. Do NOT wrap in JSON. Do NOT output explanation.`;
+
+                    const streamingRequestBody = {
+                        model: model,
+                        messages: [
+                            { role: "system", content: streamingSystemPrompt },
+                            { role: "user", content: `Format the following OCR text. Language: ${this.settings.language}.\n\n---\n${rawText}\n---` }
+                        ]
+                    };
+
+                    // Insert a placeholder
+                    const startPos = editor.getCursor();
+                    editor.replaceSelection(""); // Clear selection
+
+                    await provider.streamRequest(
+                        streamingRequestBody,
+                        (token) => {
+                            // On Token: Update Editor
+                            // Clean up token if needed (e.g. <think> handling is done in provider usually, but here checking)
+                            editor.replaceRange(token, editor.getCursor());
+                            fullBuffer += token;
+                        },
+                        (fullText) => {
+                            // On Complete
+                            this.clearStatus();
+                            // We might need to post-process (clean latex)
+                            const cleaned = this.cleanLatexDelimiters(fullText);
+                            // If the cleaned text is different, replace the whole thing? 
+                            // Or just return it.
+                            resolve(cleaned);
+                        },
+                        (error) => {
+                            new Notice(`❌ Streaming failed: ${error.message}`);
+                            this.clearStatus();
+                            resolve(null);
+                        },
+                        (reasoning) => {
+                            // Optional: Show thinking in status bar or notice?
+                            // Provider handles status bar "Thinking..."
+                        }
+                    );
+                } catch (e) {
+                    console.error("Streaming Init Error", e);
+                    resolve(null);
+                }
             });
+        }
+
+        // --- LEGACY / NON-STREAMING PIPELINE (JSON + Zod) ---
+        try {
+            let fetcher: (opts: any) => Promise<any>;
+            if (provider) {
+                fetcher = provider.fetchWithRetry.bind(provider);
+            } else {
+                fetcher = this.localFetch.bind(this);
+            }
+
+            const response = await fetcher(requestBody);
 
             // Parse Response with Zod
             let content = response.json.choices[0].message.content;
@@ -341,8 +428,7 @@ export default class AIOcrFormatterPlugin extends Plugin {
                 formattedMarkdown = this.cleanLatexDelimiters(formattedMarkdown);
 
                 if (editor) {
-                    // editor replacement handled by caller usually or here if preferred
-                    // editor.replaceSelection(formattedMarkdown);
+                    // editor.replaceSelection(formattedMarkdown); // Handled by caller usually
                     new Notice("✅ formatted!");
                 }
 
@@ -352,7 +438,6 @@ export default class AIOcrFormatterPlugin extends Plugin {
             } catch (validationError) {
                 console.error("Zod Validation Failed:", validationError);
                 new Notice("⚠️ Formatting structure invalid. Returning raw output.");
-                // Fallback to raw content if JSON parse fails, stripping json syntax if possible
                 this.clearStatus();
                 return content;
             }
