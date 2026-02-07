@@ -39218,10 +39218,15 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
     });
     this.createCollapsibleSection(containerEl, "Experimental", "flask", true, () => {
       const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
-      new import_obsidian2.Setting(content).setName("Enable Streaming").setDesc("Stream formatted text in real-time (OpenRouter only)").addToggle((toggle) => toggle.setValue(this.plugin.settings.useStreaming).onChange(async (value) => {
-        this.plugin.settings.useStreaming = value;
-        await this.plugin.saveSettings();
-      }));
+      new import_obsidian2.Setting(content).setName("Enable Streaming").setDesc(provider ? "Stream formatted text in real-time (OpenRouter only)" : "Requires OpenRouter Provider plugin").addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.useStreaming && !!provider).setDisabled(!provider).onChange(async (value) => {
+          this.plugin.settings.useStreaming = value;
+          await this.plugin.saveSettings();
+        });
+        if (!provider) {
+          toggle.toggleEl.setAttribute("title", "Please install OpenRouter Provider to use streaming");
+        }
+      });
     });
     this.createCollapsibleSection(containerEl, "Formatting Defaults", "settings", true, () => {
       const content = containerEl.createDiv({ cls: "ai-settings-section-content" });

@@ -116,13 +116,20 @@ export class AIOcrSettingTab extends PluginSettingTab {
 
             new Setting(content)
                 .setName('Enable Streaming')
-                .setDesc('Stream formatted text in real-time (OpenRouter only)')
-                .addToggle(toggle => toggle
-                    .setValue(this.plugin.settings.useStreaming)
-                    .onChange(async (value) => {
-                        this.plugin.settings.useStreaming = value;
-                        await this.plugin.saveSettings();
-                    }));
+                .setDesc(provider ? 'Stream formatted text in real-time (OpenRouter only)' : 'Requires OpenRouter Provider plugin')
+                .addToggle(toggle => {
+                    toggle
+                        .setValue(this.plugin.settings.useStreaming && !!provider)
+                        .setDisabled(!provider)
+                        .onChange(async (value) => {
+                            this.plugin.settings.useStreaming = value;
+                            await this.plugin.saveSettings();
+                        });
+
+                    if (!provider) {
+                        toggle.toggleEl.setAttribute('title', 'Please install OpenRouter Provider to use streaming');
+                    }
+                });
         });
 
 
