@@ -39171,10 +39171,9 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("ai-ocr-settings");
-    containerEl.createEl("h2", { text: "\u{1F4C4} AI OCR Formatter" });
+    containerEl.createEl("h2", { text: "AI OCR Formatter" });
     const provider = this.plugin.getProvider();
-    this.createCollapsibleSection(containerEl, "Provider", "plug", true, () => {
-      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+    this.createCollapsibleSection(containerEl, "Provider", "plug", true, (content) => {
       if (provider) {
         const row = content.createDiv({ cls: "ai-settings-row" });
         const left = row.createDiv({ cls: "ai-settings-row-info" });
@@ -39198,15 +39197,13 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
         }));
       }
     });
-    this.createCollapsibleSection(containerEl, "Mistral OCR Vision", "eye", true, () => {
-      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+    this.createCollapsibleSection(containerEl, "Mistral OCR Vision", "eye", true, (content) => {
       new import_obsidian2.Setting(content).setName("Mistral API Key").setDesc("Required for OCR extraction").addText((text) => text.setPlaceholder("API Key").setValue(this.plugin.settings.mistralApiKey).onChange(async (value) => {
         this.plugin.settings.mistralApiKey = value;
         await this.plugin.saveSettings();
       }));
     });
-    this.createCollapsibleSection(containerEl, "Image Extraction", "image", true, () => {
-      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+    this.createCollapsibleSection(containerEl, "Image Extraction", "image", true, (content) => {
       new import_obsidian2.Setting(content).setName("Extract Images").setDesc("Save images from OCR response to vault").addToggle((toggle) => toggle.setValue(this.plugin.settings.extractImages).onChange(async (value) => {
         this.plugin.settings.extractImages = value;
         await this.plugin.saveSettings();
@@ -39216,8 +39213,7 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
         await this.plugin.saveSettings();
       }));
     });
-    this.createCollapsibleSection(containerEl, "Experimental", "flask", true, () => {
-      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+    this.createCollapsibleSection(containerEl, "Experimental", "flask", true, (content) => {
       new import_obsidian2.Setting(content).setName("Enable Streaming").setDesc(provider ? "Stream formatted text in real-time (OpenRouter only)" : "Requires OpenRouter Provider plugin").addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.useStreaming && !!provider).setDisabled(!provider).onChange(async (value) => {
           this.plugin.settings.useStreaming = value;
@@ -39228,8 +39224,7 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
         }
       });
     });
-    this.createCollapsibleSection(containerEl, "Formatting Defaults", "settings", true, () => {
-      const content = containerEl.createDiv({ cls: "ai-settings-section-content" });
+    this.createCollapsibleSection(containerEl, "Formatting Defaults", "settings", true, (content) => {
       new import_obsidian2.Setting(content).setName("Default Preset").addDropdown(async (d) => {
         const presets = await this.plugin.presetManager.getPresets();
         presets.forEach((p) => d.addOption(p, p));
@@ -39252,14 +39247,9 @@ var AIOcrSettingTab = class extends import_obsidian2.PluginSettingTab {
     const chevron = header.createSpan({ cls: "ai-chevron" });
     (0, import_obsidian2.setIcon)(chevron, "chevron-down");
     const contentWrapper = section.createDiv({ cls: "ai-collapsible-content" });
-    header.addEventListener("click", () => {
-      section.toggleClass("open", !section.hasClass("open"));
-    });
-    buildContent();
-    const lastChild = container.lastElementChild;
-    if (lastChild && lastChild !== section) {
-      contentWrapper.appendChild(lastChild);
-    }
+    header.addEventListener("click", () => section.toggleClass("open", !section.hasClass("open")));
+    const content = contentWrapper.createDiv({ cls: "ai-settings-section-content" });
+    buildContent(content);
   }
 };
 

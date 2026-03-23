@@ -147,44 +147,35 @@
 
 /* --- Sections --- */
 .ai-settings-section {
-    margin-bottom: 16px;
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-    overflow: hidden;
+    margin-bottom: 20px;
 }
 
 .ai-settings-section-header {
     display: flex;
     align-items: center;
-    padding: 10px 14px;
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
+    gap: 8px;
     font-weight: 600;
-    font-size: 0.9em;
+    font-size: 1rem;
+    margin-bottom: 12px;
     color: var(--text-normal);
 }
 
 .ai-settings-section-header.clickable {
     cursor: pointer;
     user-select: none;
-    transition: background 0.2s;
 }
 
 .ai-settings-section-header.clickable:hover {
-    background: var(--background-modifier-hover);
+    color: var(--text-accent);
 }
 
 .ai-settings-section-icon {
-    display: flex;
-    align-items: center;
-    margin-right: 8px;
     opacity: 0.7;
 }
 
 .ai-chevron {
     margin-left: auto;
-    transition: transform 0.2s;
+    transition: transform 0.2s ease;
     opacity: 0.5;
 }
 
@@ -193,6 +184,8 @@
 }
 
 .ai-settings-section-content {
+    background: var(--background-secondary);
+    border-radius: 6px;
     padding: 12px;
 }
 

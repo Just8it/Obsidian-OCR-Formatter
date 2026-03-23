@@ -1,0 +1,10 @@
+{
+    "id": "ai-ocr-formatter",
+    "name": "AI OCR Formatter",
+    "version": "1.0.0",
+    "minAppVersion": "0.15.0",
+    "description": "OCR and AI formatting for images and PDFs using Mistral Vision.",
+    "author": "Just8it",
+    "authorUrl": "",
+    "isDesktopOnly": false
+}

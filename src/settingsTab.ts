@@ -20,14 +20,12 @@ export class AIOcrSettingTab extends PluginSettingTab {
         containerEl.addClass('ai-ocr-settings');
 
         // ===== HEADER =====
-        containerEl.createEl('h2', { text: '📄 AI OCR Formatter' });
+        containerEl.createEl('h2', { text: 'AI OCR Formatter' });
 
         const provider = this.plugin.getProvider();
 
         // ===== PROVIDER SECTION =====
-        this.createCollapsibleSection(containerEl, 'Provider', 'plug', true, () => {
-            const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });
-
+        this.createCollapsibleSection(containerEl, 'Provider', 'plug', true, (content) => {
             if (provider) {
                 const row = content.createDiv({ cls: 'ai-settings-row' });
                 const left = row.createDiv({ cls: 'ai-settings-row-info' });
@@ -38,7 +36,6 @@ export class AIOcrSettingTab extends PluginSettingTab {
                 const right = row.createDiv({ cls: 'ai-settings-row-action' });
                 right.createSpan({ text: 'Using shared API key', cls: 'ai-settings-row-value' });
             } else {
-                // Standalone
                 const warningDiv = content.createDiv({ cls: 'ai-settings-warning' });
                 const icon = warningDiv.createSpan({ cls: 'ai-warning-icon' });
                 setIcon(icon, 'alert-triangle');
@@ -69,9 +66,7 @@ export class AIOcrSettingTab extends PluginSettingTab {
         });
 
         // ===== MISTRAL OCR =====
-        this.createCollapsibleSection(containerEl, 'Mistral OCR Vision', 'eye', true, () => {
-            const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });
-
+        this.createCollapsibleSection(containerEl, 'Mistral OCR Vision', 'eye', true, (content) => {
             new Setting(content)
                 .setName('Mistral API Key')
                 .setDesc('Required for OCR extraction')
@@ -85,9 +80,7 @@ export class AIOcrSettingTab extends PluginSettingTab {
         });
 
         // ===== IMAGE EXTRACTION =====
-        this.createCollapsibleSection(containerEl, 'Image Extraction', 'image', true, () => {
-            const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });
-
+        this.createCollapsibleSection(containerEl, 'Image Extraction', 'image', true, (content) => {
             new Setting(content)
                 .setName('Extract Images')
                 .setDesc('Save images from OCR response to vault')
@@ -111,9 +104,7 @@ export class AIOcrSettingTab extends PluginSettingTab {
         });
 
         // ===== EXPERIMENTAL =====
-        this.createCollapsibleSection(containerEl, 'Experimental', 'flask', true, () => {
-            const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });
-
+        this.createCollapsibleSection(containerEl, 'Experimental', 'flask', true, (content) => {
             new Setting(content)
                 .setName('Enable Streaming')
                 .setDesc(provider ? 'Stream formatted text in real-time (OpenRouter only)' : 'Requires OpenRouter Provider plugin')
@@ -132,11 +123,8 @@ export class AIOcrSettingTab extends PluginSettingTab {
                 });
         });
 
-
         // ===== DEFAULTS =====
-        this.createCollapsibleSection(containerEl, 'Formatting Defaults', 'settings', true, () => {
-            const content = containerEl.createDiv({ cls: 'ai-settings-section-content' });
-
+        this.createCollapsibleSection(containerEl, 'Formatting Defaults', 'settings', true, (content) => {
             new Setting(content)
                 .setName('Default Preset')
                 .addDropdown(async (d) => {
@@ -151,7 +139,7 @@ export class AIOcrSettingTab extends PluginSettingTab {
         });
     }
 
-    private createCollapsibleSection(container: HTMLElement, title: string, icon: string, openByDefault: boolean, buildContent: () => void): void {
+    private createCollapsibleSection(container: HTMLElement, title: string, icon: string, openByDefault: boolean, buildContent: (contentEl: HTMLElement) => void): void {
         const section = container.createDiv({ cls: 'ai-settings-section ai-collapsible' });
         if (openByDefault) section.addClass('open');
 
@@ -163,37 +151,8 @@ export class AIOcrSettingTab extends PluginSettingTab {
         setIcon(chevron, 'chevron-down');
 
         const contentWrapper = section.createDiv({ cls: 'ai-collapsible-content' });
-
-        header.addEventListener('click', () => {
-            section.toggleClass('open', !section.hasClass('open'));
-        });
-
-        // Build content inside wrapper
-        // We need to capture the elements created by buildContent and move them, or pass the wrapper
-        // Since the pattern used in previous files was passing container and then moving, let's replicate that carefully
-        // But here I passed `content` div inside the callback which is appended to `containerEl` (which is `this.containerEl` passed as `container`)
-        // Wait, in my previous implementation:
-        // `createCollapsibleSection(containerEl ...)`
-        // Callback: `const content = containerEl.createDiv...`
-        // Then `contentWrapper.appendChild(lastChild)`
-
-        // Let's optimize: The callback should probably append to the wrapper directly?
-        // No, to keep consistent with the successful `ai-flashcards` implementation, I used:
-        /*
-        const widthWrapper = section.createDiv...
-        buildContent(); // this appends to container
-        const lastChild = container.lastElementChild;
-        if (lastChild !== section) widthWrapper.appendChild(lastChild);
-        */
-
-        // However, in this file I'm calling `const content = containerEl.createDiv` inside the callback.
-        // So the `content` div is appended to `containerEl`.
-        // So `container.lastElementChild` will indeed be that content div.
-
-        buildContent();
-        const lastChild = container.lastElementChild;
-        if (lastChild && lastChild !== section) {
-            contentWrapper.appendChild(lastChild);
-        }
+        header.addEventListener('click', () => section.toggleClass('open', !section.hasClass('open')));
+        const content = contentWrapper.createDiv({ cls: 'ai-settings-section-content' });
+        buildContent(content);
     }
 }
